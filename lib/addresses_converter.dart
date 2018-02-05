@@ -48,57 +48,62 @@ class localityConverter {
       // Список с мапами населенных пунтов. Для замены старого списка.
       List<Map<String, dynamic>> newLocalities =[];
 
-      // Список городов для распознования
-      List<String> tmpLocalityForRecognition = [];
-      if (  (userData['profile'] as Map).containsKey('mainLocality') && userData['profile']['mainLocality'].isNotEmpty ) {
-        tmpLocalityForRecognition.add(userData['profile']['mainLocality']);
-      }
-      if ((userData['profile'] as Map).containsKey('localities')) {
-        if (userData['profile']['localities'] is List && userData['profile']['localities'].length > 0) {
-          for (int j=0; j < userData['profile']['localities'].length; j++) {
-            if (userData['profile']['localities'][j] is String) {
-              tmpLocalityForRecognition.add(userData['profile']['localities'][j]);
+      if (userData['profile']['localities'] != null && userData['profile']['localities'].isNotEmpty && userData['profile']['localities'][0] is Map) {
+        // Уже новая структура. Ничего не делаем.
+      } else {
+        // Список городов для распознования
+        List<String> tmpLocalityForRecognition = [];
+        if (  (userData['profile'] as Map).containsKey('mainLocality') && userData['profile']['mainLocality'].isNotEmpty ) {
+          tmpLocalityForRecognition.add(userData['profile']['mainLocality']);
+        }
+        if ((userData['profile'] as Map).containsKey('localities')) {
+          if (userData['profile']['localities'] is List && userData['profile']['localities'].length > 0) {
+            for (int j=0; j < userData['profile']['localities'].length; j++) {
+              if (userData['profile']['localities'][j] is String) {
+                tmpLocalityForRecognition.add(userData['profile']['localities'][j]);
+              }
             }
           }
         }
-      }
-      // Убираем повторения
-      tmpLocalityForRecognition = new Collection(tmpLocalityForRecognition).distinct().toList();
+        // Убираем повторения
+        tmpLocalityForRecognition = new Collection(tmpLocalityForRecognition).distinct().toList();
 
-      for (int j=0; j < tmpLocalityForRecognition.length; j++) {
-        if (tmpLocalityForRecognition[j] is String) {
-          // Найденный Map для населенного пункта
-          Map suggest = {};
-          if (localityConverterUniq.containsKey(tmpLocalityForRecognition[j])) {
-            // нашли в локальном кэше. Используем
-            suggest = localityConverterUniq[tmpLocalityForRecognition[j]];
-          } else {
-            var r = await _getDadata(tmpLocalityForRecognition[j]);
-            if (r['suggestions'].length == 0) {
-              //print("Dadata ничего не вернул.");
-
+        for (int j=0; j < tmpLocalityForRecognition.length; j++) {
+          if (tmpLocalityForRecognition[j] is String) {
+            // Найденный Map для населенного пункта
+            Map suggest = {};
+            if (localityConverterUniq.containsKey(tmpLocalityForRecognition[j])) {
+              // нашли в локальном кэше. Используем
+              suggest = localityConverterUniq[tmpLocalityForRecognition[j]];
             } else {
-              // >=1
-              // Если Dadata возвращает несколько вариантов, то берем самый релевантный вариант по мнению Dadata
-              //print("${tmpLocalityForRecognition[j]} === ${r['suggestions'][0]['value']}");
-              suggest = r['suggestions'][0];
-              // пополняем данными локальный кэш населенных пунтов.
-              localityConverterUniq[tmpLocalityForRecognition[j]] = suggest;
+              var r = await _getDadata(tmpLocalityForRecognition[j]);
+              if (r['suggestions'].length == 0) {
+                //print("Dadata ничего не вернул.");
+
+              } else {
+                // >=1
+                // Если Dadata возвращает несколько вариантов, то берем самый релевантный вариант по мнению Dadata
+                //print("${tmpLocalityForRecognition[j]} === ${r['suggestions'][0]['value']}");
+                suggest = r['suggestions'][0];
+                // пополняем данными локальный кэш населенных пунтов.
+                localityConverterUniq[tmpLocalityForRecognition[j]] = suggest;
+              }
             }
-          }
-          Map newLocality = {};
-          if (suggest.isNotEmpty) {
-            newLocality = dadataToNewStructureForLocality(suggest);
-            newLocalities.add(newLocality);
+            Map newLocality = {};
+            if (suggest.isNotEmpty) {
+              newLocality = dadataToNewStructureForLocality(suggest);
+              newLocalities.add(newLocality);
+            } else {
+              //print('ПЛОХО. НЕ НАШЛИ В ДАДАТА ${userData['id']} ${tmpLocalityForRecognition[j]}');
+            }
           } else {
-            //print('ПЛОХО. НЕ НАШЛИ В ДАДАТА ${userData['id']} ${tmpLocalityForRecognition[j]}');
+            //print("Населенный пункт не строка. Наверное повторный запуск скрипта, и в localities хранится Map.");
           }
-        } else {
-          print("Населенный пункт не строка. Наверное повторный запуск скрипта, и в localities хранится Map.");
         }
+        // Проверяем, что размер массива нас. пунктов не 0
+        if (newLocalities.length > 0) await _writeNewUser( userData, newLocalities );
       }
-      // Проверяем, что размер массива нас. пунктов не 0
-      if (newLocalities.length > 0) await _writeNewUser( userData, newLocalities );
+
       i++;
       //if (i > 1)    break;
 
@@ -107,7 +112,7 @@ class localityConverter {
     print("Обработка пользователей по таблице ${_usersTableName} закончена. ${i} записей");
 
     i = 0;
-    // Работаем с задачами
+    print("Работаем с задачами");
     //_r.table(_tasksTableName).filter(_r.row('id').eq('fc1f7b35-19bc-45e7-ae0a-8ace44e645cf').or(_r.row('id').eq('0142b2a3-9e20-4119-8e28-0c612ac39478')))
     await _r.table(_tasksTableName)
         .run(_rethinkConn).then((Cursor taskCursor) async { await for(Map<String, dynamic> taskData in taskCursor) {
@@ -136,7 +141,7 @@ class localityConverter {
             //print('ПЛОХО. НЕ НАШЛИ В ДАДАТА ${taskData['id']} ${taskData['localities'][j]}');
           }
         } else {
-          print("Населенный пункт не строка. Наверное уже обработали, и в localities хранится как List<Map>.");
+          //print("Населенный пункт не строка. Наверное уже обработали, и в localities хранится как List<Map>.");
         }
       }
 
@@ -148,8 +153,6 @@ class localityConverter {
       if ( taskData.containsKey('address') && taskData['address'] != null && (taskData['address'] as Map).isNotEmpty ) {
         if ((taskData['address'] as Map).containsKey('data')) {
           newAddress = dadataToNewStructure(taskData['address']['data']);
-          //print(taskData['id']);
-          //print(newAddress);
         }
       }
       // Проверяем, что размер массива нас. пунктов старой структуры совпадает с размером массива новой структуры
@@ -159,9 +162,7 @@ class localityConverter {
       i++;
       //if (i > 1)    break;
     }});
-
-
-
+    print("Обработка задач по таблице ${_tasksTableName} закончена. ${i} записей");
   }
 
   _getKladr () async {
