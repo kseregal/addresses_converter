@@ -1,0 +1,5 @@
+# Параметры соединения с RethinkDB
+rethink:
+  dbName: ___
+  host: ___
+  port: 28015
