@@ -40,9 +40,10 @@ class localityConverter {
     await _getKladr();
 
     int  i = 0;
+    print ("Обрабатываем пользователей");
     await _r.table(_usersTableName)
         .run(_rethinkConn).then((Cursor usersCursor) async { await for(Map<String, dynamic> userData in usersCursor) {
-      print("${i} id = ${userData['id']}");
+      //print("${i} id = ${userData['id']}");
       //print(userData);
       // Список с мапами населенных пунтов. Для замены старого списка.
       List<Map<String, dynamic>> newLocalities =[];
@@ -85,14 +86,15 @@ class localityConverter {
               localityConverterUniq[tmpLocalityForRecognition[j]] = suggest;
             }
           }
+          Map newLocality = {};
           if (suggest.isNotEmpty) {
-            Map newLocality = dadataToNewStructureForLocality(suggest);
+            newLocality = dadataToNewStructureForLocality(suggest);
             newLocalities.add(newLocality);
           } else {
-            print('ПЛОХО. НЕ НАШЛИ В ДАДАТА ${userData['id']} ${tmpLocalityForRecognition[j]}');
+            //print('ПЛОХО. НЕ НАШЛИ В ДАДАТА ${userData['id']} ${tmpLocalityForRecognition[j]}');
           }
         } else {
-          print("Населенный пункт не строка. Наверное уже обработали, и localities хранится Map.");
+          print("Населенный пункт не строка. Наверное повторный запуск скрипта, и в localities хранится Map.");
         }
       }
       // Проверяем, что размер массива нас. пунктов не 0
@@ -109,7 +111,7 @@ class localityConverter {
     //_r.table(_tasksTableName).filter(_r.row('id').eq('fc1f7b35-19bc-45e7-ae0a-8ace44e645cf').or(_r.row('id').eq('0142b2a3-9e20-4119-8e28-0c612ac39478')))
     await _r.table(_tasksTableName)
         .run(_rethinkConn).then((Cursor taskCursor) async { await for(Map<String, dynamic> taskData in taskCursor) {
-      print("${i} id = ${taskData['id']}");
+      //print("${i} id = ${taskData['id']}");
       // Список с мапами населенных пунтов. Для замены старого списка.
       List<Map<String, dynamic>> newLocalities =[];
       for (int j=0; j<taskData['localities'].length; j++) {
@@ -131,10 +133,10 @@ class localityConverter {
             Map newLocality = dadataToNewStructureForLocality( suggest );
             newLocalities.add(newLocality);
           } else {
-            print('ПЛОХО. НЕ НАШЛИ В ДАДАТА ${taskData['id']} ${taskData['localities'][j]}');
+            //print('ПЛОХО. НЕ НАШЛИ В ДАДАТА ${taskData['id']} ${taskData['localities'][j]}');
           }
         } else {
-          print("Населенный пункт не строка. Наверное уже обработали, и localities хранится как List<Map>.");
+          print("Населенный пункт не строка. Наверное уже обработали, и в localities хранится как List<Map>.");
         }
       }
 
@@ -157,6 +159,7 @@ class localityConverter {
       i++;
       //if (i > 1)    break;
     }});
+
 
 
   }
@@ -312,7 +315,7 @@ class localityConverter {
         "addresses": [newAddress]
       }).run(_rethinkConn);
     } else {
-      print ("уже с обновленной структурой");
+      //print ("уже с обновленной структурой");
     }
 
   }
