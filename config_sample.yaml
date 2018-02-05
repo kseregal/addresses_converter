@@ -3,3 +3,5 @@ rethink:
   dbName: ___
   host: ___
   port: 28015
+tasksTableName: tasks1
+usersTableName: users

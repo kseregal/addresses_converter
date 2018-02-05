@@ -1,13 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:rethinkdb_driver2/rethinkdb_driver2.dart';
 import 'package:http_client/console.dart' as http;
+import 'package:queries/collections.dart';
+import 'package:rethinkdb_driver2/rethinkdb_driver2.dart';
 
 class localityConverter {
   Rethinkdb _r;
   Connection _rethinkConn;
   final Map _config;
+
+  /// Таблица users
+  String get _usersTableName => _config["usersTableName"];
+
   /// Таблица tasks
   String get _tasksTableName => _config["tasksTableName"];
   /// http клиент для выполнения запросов к dadata
@@ -30,46 +35,130 @@ class localityConverter {
   Map localityConverterUniq= {};
 
   convert () async {
-    print('получаем кладр айди');
+    // получаем кладр id
+    // реально он для этой задачи не используется.
     await _getKladr();
-    print('работаем kladrId ${kladrId}');
+
     int  i = 0;
-    // Работаем с задачами
-    //_r.table(_tasksTableName).filter(_r.row('id').eq('fc1f7b35-19bc-45e7-ae0a-8ace44e645cf').or(_r.row('id').eq('0142b2a3-9e20-4119-8e28-0c612ac39478')))
-    _r.table(_tasksTableName)
-        .run(_rethinkConn).then((Cursor taskCursor) async { await for(Map<String, dynamic> taskData in taskCursor) {
-      print(i);
+    await _r.table(_usersTableName)
+        .run(_rethinkConn).then((Cursor usersCursor) async { await for(Map<String, dynamic> userData in usersCursor) {
+      print("${i} id = ${userData['id']}");
+      //print(userData);
       // Список с мапами населенных пунтов. Для замены старого списка.
       List<Map<String, dynamic>> newLocalities =[];
-      for (int i=0; i<taskData['localities'].length; i++) {
 
-        var r = await _getDadata(taskData['localities'][i]);
-        if (r['suggestions'].length > 1) {
-          print ("Много вариантов" );
-          print(r['suggestions'].length);
-          print(taskData['localities'][i]);
-          print(r['suggestions']);
-          break;
-        } else {
-          Map newLocality = dadataToNewStructureForLocality(r['suggestions'][0]);
-          newLocalities.add(newLocality);
+      // Список городов для распознования
+      List<String> tmpLocalityForRecognition = [];
+      if (  (userData['profile'] as Map).containsKey('mainLocality') && userData['profile']['mainLocality'].isNotEmpty ) {
+        tmpLocalityForRecognition.add(userData['profile']['mainLocality']);
+      }
+      if ((userData['profile'] as Map).containsKey('localities')) {
+        if (userData['profile']['localities'] is List && userData['profile']['localities'].length > 0) {
+          for (int j=0; j < userData['profile']['localities'].length; j++) {
+            if (userData['profile']['localities'][j] is String) {
+              tmpLocalityForRecognition.add(userData['profile']['localities'][j]);
+            }
+          }
         }
       }
+      // Убираем повторения
+      tmpLocalityForRecognition = new Collection(tmpLocalityForRecognition).distinct().toList();
+
+      for (int j=0; j < tmpLocalityForRecognition.length; j++) {
+        if (tmpLocalityForRecognition[j] is String) {
+          // Найденный Map для населенного пункта
+          Map suggest = {};
+          if (localityConverterUniq.containsKey(tmpLocalityForRecognition[j])) {
+            // нашли в локальном кэше. Используем
+            suggest = localityConverterUniq[tmpLocalityForRecognition[j]];
+          } else {
+            var r = await _getDadata(tmpLocalityForRecognition[j]);
+            if (r['suggestions'].length == 0) {
+              //print("Dadata ничего не вернул.");
+
+            } else {
+              // >=1
+              // Если Dadata возвращает несколько вариантов, то берем самый релевантный вариант по мнению Dadata
+              //print("${tmpLocalityForRecognition[j]} === ${r['suggestions'][0]['value']}");
+              suggest = r['suggestions'][0];
+              // пополняем данными локальный кэш населенных пунтов.
+              localityConverterUniq[tmpLocalityForRecognition[j]] = suggest;
+            }
+          }
+          if (suggest.isNotEmpty) {
+            Map newLocality = dadataToNewStructureForLocality(suggest);
+            newLocalities.add(newLocality);
+          } else {
+            print('ПЛОХО. НЕ НАШЛИ В ДАДАТА ${userData['id']} ${tmpLocalityForRecognition[j]}');
+          }
+        } else {
+          print("Населенный пункт не строка. Наверное уже обработали, и localities хранится Map.");
+        }
+      }
+      // Проверяем, что размер массива нас. пунктов не 0
+      if (newLocalities.length > 0) await _writeNewUser( userData, newLocalities );
+      i++;
+      //if (i > 1)    break;
+
+    }});
+
+    print("Обработка пользователей по таблице ${_usersTableName} закончена. ${i} записей");
+
+    i = 0;
+    // Работаем с задачами
+    //_r.table(_tasksTableName).filter(_r.row('id').eq('fc1f7b35-19bc-45e7-ae0a-8ace44e645cf').or(_r.row('id').eq('0142b2a3-9e20-4119-8e28-0c612ac39478')))
+    await _r.table(_tasksTableName)
+        .run(_rethinkConn).then((Cursor taskCursor) async { await for(Map<String, dynamic> taskData in taskCursor) {
+      print("${i} id = ${taskData['id']}");
+      // Список с мапами населенных пунтов. Для замены старого списка.
+      List<Map<String, dynamic>> newLocalities =[];
+      for (int j=0; j<taskData['localities'].length; j++) {
+        Map suggest = {};
+        if (taskData['localities'][j] is String) {
+          if (localityConverterUniq.containsKey(taskData['localities'][j])) {
+            // нашли в локальном кэше. Используем
+            suggest = localityConverterUniq[taskData['localities'][j]];
+          } else {
+            var r = await _getDadata(taskData['localities'][j]);
+            if (r['suggestions'].length > 0) {
+              // Если Dadata возвращает несколько вариантов, то берем самый релевантный вариант по мнению Dadata
+              suggest = r['suggestions'][0];
+              localityConverterUniq[taskData['localities'][j]] = suggest;
+            }
+          }
+          if (suggest.isNotEmpty) { // >=1
+            // print("${taskData['localities'][j]} === ${r['suggestions'][0]['value']}");
+            Map newLocality = dadataToNewStructureForLocality( suggest );
+            newLocalities.add(newLocality);
+          } else {
+            print('ПЛОХО. НЕ НАШЛИ В ДАДАТА ${taskData['id']} ${taskData['localities'][j]}');
+          }
+        } else {
+          print("Населенный пункт не строка. Наверное уже обработали, и localities хранится как List<Map>.");
+        }
+      }
+
+      // Обрабатываем адрес.
+      // Сейчас хранится один адрес.
+      // Его нужно только слегка причесать.
+      // Новый мап адреса для списка tasks.addresses
       Map newAddress = {};
       if ( taskData.containsKey('address') && taskData['address'] != null && (taskData['address'] as Map).isNotEmpty ) {
         if ((taskData['address'] as Map).containsKey('data')) {
           newAddress = dadataToNewStructure(taskData['address']['data']);
-          print(taskData['id']);
-          print(newAddress);
+          //print(taskData['id']);
+          //print(newAddress);
         }
-
       }
       // Проверяем, что размер массива нас. пунктов старой структуры совпадает с размером массива новой структуры
       if (newLocalities.length == taskData['localities'].length) {
-        writeNewTask(taskData, newLocalities, newAddress);
+        await _writeNewTask(taskData, newLocalities, newAddress);
       }
       i++;
+      //if (i > 1)    break;
     }});
+
+
   }
 
   _getKladr () async {
@@ -93,23 +182,24 @@ class localityConverter {
     });
   }
 
+  /// Получаем из Dadata подсказки по названию населенного пункта.
   Future<Map<String, dynamic>> _getDadata (String localityString) async {
-    if (localityConverterUniq.containsKey(localityString))  return localityConverterUniq[localityString];
-    print ('не нашли');
+
     String url = "${_baseSuggestUrl}address";
     Map requestBody = {
       "query": localityString
     };
     // Делаем ограничение выдачи от города до хз. Наверное деревни.
     requestBody["from_bound"] = { "value": "city" };
-    requestBody["to_bound"] = { "value": "settlement" };
+    requestBody["to_bound"] = { "value": "city" };
+    //requestBody["to_bound"] = { "value": "settlement" };
 
     http.Request req= new http.Request('post', url, headers: _requestHeaders, body: JSON.encode(requestBody));
     Map dadata = await _client.send(req).then((http.Response response) async {
       Map resBody = JSON.decode(await response.readAsString());
       return resBody;
     });
-    localityConverterUniq[localityString] = dadata;
+
     return dadata;
   }
 
@@ -149,72 +239,72 @@ class localityConverter {
   /// Кот. подойдет для адреса
   Map dadataToNewStructure (Map dadataAddressStructure) {
     Map<String, dynamic> curAddress = {
-    // Страна
-    "country": dadataAddressStructure['country'] ?? null,
-    // Регион
-    "region_type": dadataAddressStructure['region_type'],
-    "region_type_full": dadataAddressStructure['region_type_full'],
-    "region": dadataAddressStructure['region'],
-    // Район
-    "area_type": dadataAddressStructure['area_type'],
-    "area_type_full": dadataAddressStructure['area_type_full'],
-    "area": dadataAddressStructure['area'],
-    // Город
-    "city_type": dadataAddressStructure['city_type'],
-    "city_type_full": dadataAddressStructure['city_type_full'],
-    "city": dadataAddressStructure['city'],
-    // Район города
-    "city_district_type": dadataAddressStructure['city_district_type'],
-    "city_district_type_full": dadataAddressStructure['city_district_type_full'],
-    "city_district": dadataAddressStructure['city_district'],
-    // Населённый пункт
-    "settlement_type": dadataAddressStructure['settlement_type'],
-    "settlement_type_full": dadataAddressStructure['settlement_type_full'],
-    "settlement": dadataAddressStructure['settlement'],
-    // Улица
-    "street_type": dadataAddressStructure['street_type'],
-    "street_type_full": dadataAddressStructure['street_type_full'],
-    "street": dadataAddressStructure['street'],
-    // Дом
-    "house_type": dadataAddressStructure['house_type'],
-    "house_type_full": dadataAddressStructure['house_type_full'],
-    "house": dadataAddressStructure['house'],
-    // Секция
-    "block_type": dadataAddressStructure['block_type'],
-    "block_type_full": dadataAddressStructure['block_type_full'],
-    "block": dadataAddressStructure['block'],
-    // Квартира
-    "flat_type": dadataAddressStructure['flat_type'],
-    "flat_type_full": dadataAddressStructure['flat_type_full'],
-    "flat": dadataAddressStructure['flat'],
-    // ФИАС идентификатор
-    "fias_id": dadataAddressStructure['fias_id'],
-    // Уроверь глубины идентификатора
-    "fias_level": dadataAddressStructure['fias_level'],
-    // КЛАДР идентификатор
-    "kladr_id": dadataAddressStructure['kladr_id'],
-    // Координаты
-    "geo_lat": dadataAddressStructure['geo_lat'],
-    "geo_lon": dadataAddressStructure['geo_lon'],
-    // Точность координат
-    "qc_geo": dadataAddressStructure['qc_geo'],
-    // Итоговая строка полностью
-    "endpoint_full": dadataAddressStructure['unrestricted_value'],
-    // Города без лишних уточнений, нас пункты с регионом
-    "endpoint_short": dadataAddressStructure['city'] == null ?
-    dadataAddressStructure['settlement_type'] + ' ' +
-        dadataAddressStructure['settlement'] + ' ' +
-        dadataAddressStructure['area_type'] + ' ' +
-        dadataAddressStructure['area'] : dadataAddressStructure['city']
+      // Страна
+      "country": dadataAddressStructure['country'] ?? null,
+      // Регион
+      "region_type": dadataAddressStructure['region_type'],
+      "region_type_full": dadataAddressStructure['region_type_full'],
+      "region": dadataAddressStructure['region'],
+      // Район
+      "area_type": dadataAddressStructure['area_type'],
+      "area_type_full": dadataAddressStructure['area_type_full'],
+      "area": dadataAddressStructure['area'],
+      // Город
+      "city_type": dadataAddressStructure['city_type'],
+      "city_type_full": dadataAddressStructure['city_type_full'],
+      "city": dadataAddressStructure['city'],
+      // Район города
+      "city_district_type": dadataAddressStructure['city_district_type'],
+      "city_district_type_full": dadataAddressStructure['city_district_type_full'],
+      "city_district": dadataAddressStructure['city_district'],
+      // Населённый пункт
+      "settlement_type": dadataAddressStructure['settlement_type'],
+      "settlement_type_full": dadataAddressStructure['settlement_type_full'],
+      "settlement": dadataAddressStructure['settlement'],
+      // Улица
+      "street_type": dadataAddressStructure['street_type'],
+      "street_type_full": dadataAddressStructure['street_type_full'],
+      "street": dadataAddressStructure['street'],
+      // Дом
+      "house_type": dadataAddressStructure['house_type'],
+      "house_type_full": dadataAddressStructure['house_type_full'],
+      "house": dadataAddressStructure['house'],
+      // Секция
+      "block_type": dadataAddressStructure['block_type'],
+      "block_type_full": dadataAddressStructure['block_type_full'],
+      "block": dadataAddressStructure['block'],
+      // Квартира
+      "flat_type": dadataAddressStructure['flat_type'],
+      "flat_type_full": dadataAddressStructure['flat_type_full'],
+      "flat": dadataAddressStructure['flat'],
+      // ФИАС идентификатор
+      "fias_id": dadataAddressStructure['fias_id'],
+      // Уроверь глубины идентификатора
+      "fias_level": dadataAddressStructure['fias_level'],
+      // КЛАДР идентификатор
+      "kladr_id": dadataAddressStructure['kladr_id'],
+      // Координаты
+      "geo_lat": dadataAddressStructure['geo_lat'],
+      "geo_lon": dadataAddressStructure['geo_lon'],
+      // Точность координат
+      "qc_geo": dadataAddressStructure['qc_geo'],
+      // Итоговая строка полностью
+      "endpoint_full": dadataAddressStructure['unrestricted_value'],
+      // Города без лишних уточнений, нас пункты с регионом
+      "endpoint_short": dadataAddressStructure['city'] == null ?
+      dadataAddressStructure['settlement_type'] + ' ' +
+          dadataAddressStructure['settlement'] + ' ' +
+          dadataAddressStructure['area_type'] + ' ' +
+          dadataAddressStructure['area'] : dadataAddressStructure['city']
     };
     return curAddress;
   }
 
   /// Записывает в задачу новый localities и новый адрес
   /// Два адреса пока быть не может
-  void writeNewTask (Map taskData, List<Map> newLocalities, Map newAddress) {
+  Future _writeNewTask (Map taskData, List<Map> newLocalities, Map newAddress) async {
     if (!taskData.containsKey('addresses')) {
-      _r.table(_tasksTableName)
+      return await _r.table(_tasksTableName)
           .get(taskData['id'])
           .update({
         "localities": newLocalities,
@@ -226,5 +316,16 @@ class localityConverter {
     }
 
   }
+  /// Записывает в пользователя новый localities и новый адрес
+  /// Два адреса пока быть не может
+  Future _writeNewUser (Map userData, List<Map> newLocalities) async {
+    return await _r.table(_usersTableName)
+        .get( userData['id'] )
+        .update({"profile": {
+      "localities": newLocalities,
+      "localities_backup": userData['profile']['localities'], // бакапим
+    }}).run(_rethinkConn);
+  }
 }
+
 

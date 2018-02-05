@@ -18,6 +18,6 @@ main(List<String> arguments) async {
       port: config["rethink"]["port"]
   );
   localityConverter locConv = new localityConverter(_r, _rethinkConn, config);
-  locConv.convert();
-
+  await locConv.convert();
+  //_rethinkConn.close();
 }
