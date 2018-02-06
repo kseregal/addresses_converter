@@ -41,6 +41,7 @@ class localityConverter {
 
     int  i = 0;
     print ("Обрабатываем пользователей");
+
     await _r.table(_usersTableName)
         .run(_rethinkConn).then((Cursor usersCursor) async { await for(Map<String, dynamic> userData in usersCursor) {
       //print("${i} id = ${userData['id']}");
@@ -109,14 +110,16 @@ class localityConverter {
 
     }});
 
+
+
     print("Обработка пользователей по таблице ${_usersTableName} закончена. ${i} записей");
 
     i = 0;
     print("Работаем с задачами");
-    //_r.table(_tasksTableName).filter(_r.row('id').eq('fc1f7b35-19bc-45e7-ae0a-8ace44e645cf').or(_r.row('id').eq('0142b2a3-9e20-4119-8e28-0c612ac39478')))
+    //await _r.table(_tasksTableName).filter(_r.row('id').eq('2eed75b0-b3e3-4b44-a3aa-a9079a00df78').or(_r.row('id').eq('0142b2a3-9e20-4119-8e28-0c612ac39478')))
     await _r.table(_tasksTableName)
         .run(_rethinkConn).then((Cursor taskCursor) async { await for(Map<String, dynamic> taskData in taskCursor) {
-      //print("${i} id = ${taskData['id']}");
+      print("${i} id = ${taskData['id']}");
       // Список с мапами населенных пунтов. Для замены старого списка.
       List<Map<String, dynamic>> newLocalities =[];
       for (int j=0; j<taskData['localities'].length; j++) {
@@ -134,11 +137,11 @@ class localityConverter {
             }
           }
           if (suggest.isNotEmpty) { // >=1
-            // print("${taskData['localities'][j]} === ${r['suggestions'][0]['value']}");
+            //print("${taskData['localities'][j]} === ${suggest}");
             Map newLocality = dadataToNewStructureForLocality( suggest );
             newLocalities.add(newLocality);
           } else {
-            //print('ПЛОХО. НЕ НАШЛИ В ДАДАТА ${taskData['id']} ${taskData['localities'][j]}');
+            print('ПЛОХО. НЕ НАШЛИ В ДАДАТА ${taskData['id']} ${taskData['localities'][j]}');
           }
         } else {
           //print("Населенный пункт не строка. Наверное уже обработали, и в localities хранится как List<Map>.");
@@ -155,8 +158,9 @@ class localityConverter {
           newAddress = dadataToNewStructure(taskData['address']['data']);
         }
       }
-      // Проверяем, что размер массива нас. пунктов старой структуры совпадает с размером массива новой структуры
-      if (newLocalities.length == taskData['localities'].length) {
+      // Проверяем, что размер массива нас. пунктов новой структуры не пустой
+
+      if (newLocalities.length >0) {
         await _writeNewTask(taskData, newLocalities, newAddress);
       }
       i++;
